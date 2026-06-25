@@ -18,7 +18,7 @@ export type ModelDiscovery = () => Promise<readonly GeminiModelMapping[]>;
 
 const FALLBACK_MODEL: GeminiModelMapping = {
   id: 'gemini-web',
-  upstreamModelId: 'gemini-web',
+  upstreamModelId: 'gemini-2.0-flash-exp',
   ownedBy: 'google',
   discovered: false,
 };
