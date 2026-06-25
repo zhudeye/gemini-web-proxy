@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: gemini-web-proxy
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "20"
+      - key: GEMINI_COOKIE
+        sync: false
+      - key: GEMINI_COOKIE_TS
+        sync: false
+      - key: GEMINI_COOKIE_CC
+        sync: false
+      - key: GEMINI_ENDPOINT
+        sync: false
+      - key: API_KEYS
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
