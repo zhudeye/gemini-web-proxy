@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { GeminiWebTokens } from '../src/auth/token-extractor.js';
 import type { GeminiModelMapping } from '../src/models/registry.js';
 import { parseChatCompletionRequest } from '../src/openai/types.js';
-import { buildGeminiFReq, buildGeminiRequestBody } from '../src/transform/request-builder.js';
+import { buildGeminiEndpointUrl, buildGeminiFReq, buildGeminiRequestBody } from '../src/transform/request-builder.js';
 
 const tokens: GeminiWebTokens = {
   snlM0e: 'token-snlm0e-value',
@@ -67,5 +67,34 @@ describe('Gemini Web request builder', () => {
         messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } }] }],
       }),
     ).toThrow(/Only text message content/);
+  });
+});
+
+describe('buildGeminiEndpointUrl', () => {
+  it('builds a valid StreamGenerate URL with tokens', () => {
+    const url = buildGeminiEndpointUrl(tokens, 'en');
+
+    expect(url).toContain('https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate');
+    expect(url).toContain('bl=token-cfb2h-value');
+    expect(url).toContain('f.sid=token-fdrfje-value');
+    expect(url).toContain('hl=en');
+    expect(url).toContain('rt=c');
+    expect(url).toContain('_reqid=');
+  });
+
+  it('accepts a language override', () => {
+    const url = buildGeminiEndpointUrl(tokens, 'zh-CN');
+
+    expect(url).toContain('hl=zh-CN');
+  });
+
+  it('generates unique _reqid values on subsequent calls', () => {
+    const url1 = buildGeminiEndpointUrl(tokens);
+    const url2 = buildGeminiEndpointUrl(tokens);
+
+    const reqId1 = new URL(url1).searchParams.get('_reqid');
+    const reqId2 = new URL(url2).searchParams.get('_reqid');
+
+    expect(reqId1).not.toBe(reqId2);
   });
 });

@@ -78,3 +78,23 @@ export function buildGeminiRequestBody(
     fReq,
   };
 }
+
+/**
+ * Build the Gemini Web StreamGenerate endpoint URL from extracted tokens.
+ * The `_reqid` param auto-increments per request to satisfy Google's batching protocol.
+ */
+let nextReqId = Math.floor(Math.random() * 100000) + 100000;
+
+export function buildGeminiEndpointUrl(tokens: GeminiWebTokens, lang = 'en'): string {
+  const reqId = nextReqId;
+  nextReqId += 100000;
+
+  const url = new URL('https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate');
+  url.searchParams.set('bl', tokens.cfb2h);
+  url.searchParams.set('f.sid', tokens.fdrFJe);
+  url.searchParams.set('hl', lang);
+  url.searchParams.set('_reqid', String(reqId));
+  url.searchParams.set('rt', 'c');
+
+  return url.toString();
+}

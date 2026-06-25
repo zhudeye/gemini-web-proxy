@@ -2,7 +2,7 @@ import type { AppConfig } from '../config.js';
 import type { GeminiTokenExtractor } from '../auth/token-extractor.js';
 import type { GeminiModelMapping } from '../models/registry.js';
 import type { ChatCompletionRequest } from '../openai/types.js';
-import { buildGeminiRequestBody } from '../transform/request-builder.js';
+import { buildGeminiEndpointUrl, buildGeminiRequestBody } from '../transform/request-builder.js';
 import { GeminiFrameParser, type GeminiFrameEvent } from '../transform/frame-parser.js';
 
 export interface GeminiGenerateOptions {
@@ -19,14 +19,19 @@ function latestUserMessage(request: ChatCompletionRequest): string {
 }
 
 export async function* generateGeminiEvents(options: GeminiGenerateOptions): AsyncGenerator<GeminiFrameEvent> {
-  if (options.config.geminiEndpoint.includes('/_/mock/endpoint')) {
+  // Non-production with no explicit endpoint -> use mock response for tests
+  if (options.config.nodeEnv !== 'production' && !options.config.geminiEndpoint) {
     yield { type: 'delta', text: `Mock Gemini response to: ${latestUserMessage(options.request)}`, fullText: `Mock Gemini response to: ${latestUserMessage(options.request)}` };
     return;
   }
 
   const tokens = await options.tokenExtractor.getTokens();
+
+  // Build endpoint URL: use provided endpoint, or auto-build from tokens
+  const endpointUrl = options.config.geminiEndpoint || buildGeminiEndpointUrl(tokens);
+
   const geminiRequest = buildGeminiRequestBody(options.request, tokens, options.model);
-  const response = await fetch(options.config.geminiEndpoint, {
+  const response = await fetch(endpointUrl, {
     method: 'POST',
     headers: geminiRequest.headers,
     body: geminiRequest.body,

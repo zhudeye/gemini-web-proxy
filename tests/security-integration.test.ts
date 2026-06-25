@@ -12,6 +12,7 @@ let server: Server | undefined;
 function testContext(rateLimitPerMinute = 20): AppContext {
   const config = loadConfig({
     NODE_ENV: 'test',
+    GEMINI_COOKIE: '__Secure-1PSID=mock-sid; __Secure-1PSIDTS=mock-ts',
     API_KEYS: 'test-key',
     ALLOWED_ORIGINS: 'https://allowed.example',
     RATE_LIMIT_PER_MINUTE: String(rateLimitPerMinute),
