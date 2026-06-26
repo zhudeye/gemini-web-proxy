@@ -81,6 +81,23 @@ describe('GeminiFrameParser', () => {
     expect(deltas[0].text).toBe('Hello');
   });
 
+  it('extracts text from nested [[wrb.fr,...]] batch wrapper format', () => {
+    // Real StreamGenerate response wraps frames in an extra array: [["wrb.fr", null, payload]]
+    const payload = JSON.stringify([null, ['c_id', 'r_id'], null, null, [['rc_id', ['nested batch']]]]);
+    const frames = [
+      ")]}'",
+      '42',
+      JSON.stringify([['wrb.fr', null, payload]]),
+      '',
+    ].join('\n');
+
+    const events = parseGeminiFrameStream(frames);
+    const deltas = events.filter((event) => event.type === 'delta');
+
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0].text).toBe('nested batch');
+  });
+
   it('maps known upstream error sequence to error event', () => {
     const events = parseGeminiFrameStream(`${JSON.stringify(['wrb.fr', null, JSON.stringify([[5, 2, 0, 1, 0]])])}\n`);
 

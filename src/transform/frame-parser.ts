@@ -189,11 +189,25 @@ export class GeminiFrameParser {
       return [];
     }
 
-    if (outer[0] !== 'wrb.fr') {
+    // The response can be either:
+    //   [["wrb.fr", null, payload]]   — batch wrapper (StreamGenerate)
+    //   ["wrb.fr", null, payload]     — direct frame (batchexecute / test)
+    // Unwrap batch wrapper to get frames, then process each frame.
+    const frames: readonly unknown[] = isRecordArray(outer[0]) ? outer : [outer];
+
+    const events: GeminiFrameEvent[] = [];
+    for (const frame of frames) {
+      events.push(...this.processFrame(frame));
+    }
+    return events;
+  }
+
+  private processFrame(frame: unknown): readonly GeminiFrameEvent[] {
+    if (!isRecordArray(frame) || frame[0] !== 'wrb.fr') {
       return [];
     }
 
-    const inner = parseInnerPayload(outer);
+    const inner = parseInnerPayload(frame);
     if (inner === null) {
       return [];
     }
