@@ -160,10 +160,13 @@ export class GeminiFrameParser {
       if (typeof textParts[0] === 'string') {
         let text = textParts[0];
 
-        // Strip encrypted context suffix: c_<conv_hex><base64>c_<conv_hex>
+        // Strip encrypted context suffix: c_<hex><base64>c_<hex>
+        // Try conversation ID first, then fall back to generic pattern
         if (convHex !== null) {
           text = text.replace(new RegExp('c_' + convHex.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '.*$', ''), '');
         }
+        // Generic fallback: strip any c_<16hex> suffix (encrypted context)
+        text = text.replace(/c_[0-9a-f]{16}.*$/g, '');
 
         fullText += text;
       }
