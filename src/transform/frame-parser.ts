@@ -128,6 +128,8 @@ export class GeminiFrameParser {
       return null;
     }
 
+    // For each candidate, the actual response text is at candidate[1][0] (first text part).
+    // Subsequent text parts may contain encrypted context data, not response text.
     let fullText = '';
 
     for (const candidate of candidates) {
@@ -136,14 +138,13 @@ export class GeminiFrameParser {
       }
 
       const textParts = candidate[1];
-      if (!Array.isArray(textParts)) {
+      if (!Array.isArray(textParts) || textParts.length === 0) {
         continue;
       }
 
-      for (const part of textParts) {
-        if (typeof part === 'string') {
-          fullText += part;
-        }
+      // Only use the first text part — the rest are non-text metadata/context blobs
+      if (typeof textParts[0] === 'string') {
+        fullText += textParts[0];
       }
     }
 
@@ -217,17 +218,30 @@ export class GeminiFrameParser {
     }
 
     // Try StreamGenerate response format: payload[4] = [[candidate_id, [text_parts], ...]]
-    const candidateText = this.extractStreamGenerateText(inner);
-    if (candidateText !== null) {
-      const delta = candidateText.startsWith(this.lastText) ? candidateText.slice(this.lastText.length) : candidateText;
-      this.lastText = candidateText;
-      if (delta.length > 0) {
-        return [{ type: 'delta', text: delta, fullText: candidateText }];
+    if (Array.isArray(inner) && inner.length >= 5) {
+      // payload[4] is the candidates slot
+      if (inner[4] === undefined || inner[4] === null) {
+        // Candidate slot exists but empty — skip (no response yet)
+        return [];
       }
+
+      if (Array.isArray(inner[4])) {
+        const candidateText = this.extractStreamGenerateText(inner);
+        if (candidateText !== null) {
+          const delta = candidateText.startsWith(this.lastText) ? candidateText.slice(this.lastText.length) : candidateText;
+          this.lastText = candidateText;
+          if (delta.length > 0) {
+            return [{ type: 'delta', text: delta, fullText: candidateText }];
+          }
+          return [];
+        }
+      }
+
+      // payload[4] is a non-array (e.g. metadata object) — skip frame
       return [];
     }
 
-    // Fall back to longest string heuristic (batchexecute format)
+    // Legacy batchexecute format — fall back to longest string heuristic
     const fullText = findLongestString(inner);
     if (fullText === null || fullText.length === 0) {
       return [];

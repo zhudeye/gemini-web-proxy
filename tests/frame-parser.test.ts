@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { FrameParseError, parseGeminiFrameStream } from '../src/transform/frame-parser.js';
 
 function wrbFrame(fullText: string): string {
-  return JSON.stringify(['wrb.fr', null, JSON.stringify([null, null, null, null, fullText])]);
+  // StreamGenerate format: [null, ["c_id","r_id"], null, null, [[candidate, [text_parts]]]]
+  const payload = JSON.stringify([null, ['c_id', 'r_id'], null, null, [['rc_id', [fullText]]]]);
+  return JSON.stringify(['wrb.fr', null, payload]);
 }
 
 const fixtureStream = [
@@ -44,7 +46,7 @@ describe('GeminiFrameParser', () => {
 
   it('extracts text from StreamGenerate candidate format', () => {
     // Real StreamGenerate: [null, ["c_id","r_id"], null, null, [[candidate, [text_parts]]]]
-    const payload = JSON.stringify([null, ['c_id', 'r_id'], null, null, [['rc_id', ['Hello ', 'world']]]]);
+    const payload = JSON.stringify([null, ['c_id', 'r_id'], null, null, [['rc_id', ['Hello world']]]]);
     const frames = [
       ")]}'",
       '42',
