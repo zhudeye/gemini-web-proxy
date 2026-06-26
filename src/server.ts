@@ -12,6 +12,7 @@ import { parseChatCompletionRequest } from './openai/types.js';
 import { requireBearerAuth } from './security/auth.js';
 import { corsHeaders } from './security/cors.js';
 import { rateLimitHeaders, SlidingWindowRateLimiter } from './security/rate-limit.js';
+import { RequestGuard } from './security/request-guard.js';
 import { redactSecrets } from './security/redaction.js';
 
 const SERVICE_NAME = 'gemini-web';
@@ -21,6 +22,7 @@ export interface AppContext {
   readonly modelRegistry: ModelRegistry;
   readonly tokenExtractor: GeminiTokenExtractor;
   readonly rateLimiter: SlidingWindowRateLimiter;
+  readonly requestGuard: RequestGuard;
 }
 
 function createProxyAwareFetch(proxyUrl: string): FetchLike {
@@ -42,6 +44,7 @@ function createDefaultContext(config: AppConfig = CONFIG): AppContext {
       geminiCookieCc: config.geminiCookieCc,
     }, fetchImpl),
     rateLimiter: new SlidingWindowRateLimiter(config.rateLimitPerMinute),
+    requestGuard: new RequestGuard(config.maxConcurrentRequests, config.minRequestDelayMs, config.dailyQuota),
   };
 }
 
@@ -99,7 +102,12 @@ function requestCorsHeaders(req: IncomingMessage, context: AppContext): http.Out
   return corsHeaders(origin, context.config.allowedOrigins);
 }
 
-function authenticateAndRateLimit(req: IncomingMessage, context: AppContext): http.OutgoingHttpHeaders {
+interface AuthResult {
+  readonly token: string;
+  readonly headers: http.OutgoingHttpHeaders;
+}
+
+function authenticateAndRateLimit(req: IncomingMessage, context: AppContext): AuthResult {
   const token = requireBearerAuth(req.headers, context.config.apiKeys);
   const result = context.rateLimiter.check(token);
   const headers = rateLimitHeaders(result);
@@ -107,7 +115,7 @@ function authenticateAndRateLimit(req: IncomingMessage, context: AppContext): ht
     throw Object.assign(rateLimitError(), { headers });
   }
 
-  return headers;
+  return { token, headers };
 }
 
 function handleHealth(req: IncomingMessage, res: ServerResponse, pathname: string): void {
@@ -177,7 +185,7 @@ async function handleModels(req: IncomingMessage, res: ServerResponse, context: 
       return;
     }
 
-    const rateHeaders = authenticateAndRateLimit(req, context);
+    const { headers: rateHeaders } = authenticateAndRateLimit(req, context);
     await context.modelRegistry.refresh();
     sendJson(res, 200, context.modelRegistry.toOpenAIResponse(), { ...baseHeaders, ...rateHeaders });
   } catch (error) {
@@ -194,45 +202,68 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse, 
       return;
     }
 
-    const rateHeaders = authenticateAndRateLimit(req, context);
+    const { token, headers: rateHeaders } = authenticateAndRateLimit(req, context);
+
+    // RequestGuard check: concurrency, delay, daily quota
+    const guardResult = context.requestGuard.acquire(token);
+    if (!guardResult.allowed) {
+      sendJson(res, guardResult.statusCode, {
+        error: {
+          message: guardResult.error,
+          type: 'rate_limit_error',
+          code: 'rate_limit_exceeded',
+        },
+      }, { ...baseHeaders, ...rateHeaders, ...guardResult.headers });
+      return;
+    }
+
     const body = await readJsonBody(req);
     const chatRequest = parseChatCompletionRequest(body);
     await context.modelRegistry.refresh();
     const model = context.modelRegistry.resolveModel(chatRequest.model);
 
     if (chatRequest.stream === true) {
-      await handleStreamingChat(req, res, context, chatRequest, model, { ...baseHeaders, ...rateHeaders });
+      try {
+        await handleStreamingChat(req, res, context, chatRequest, model, { ...baseHeaders, ...rateHeaders });
+      } finally {
+        context.requestGuard.release(token);
+      }
       return;
     }
 
-    let content = '';
+    // Non-streaming
+    try {
+      let content = '';
 
-    for await (const event of generateGeminiEvents({
-      config: context.config,
-      tokenExtractor: context.tokenExtractor,
-      request: chatRequest,
-      model,
-    })) {
-      if (event.type === 'error') {
-        throw new OpenAIHttpError(502, event.message, 'server_error', event.code);
+      for await (const event of generateGeminiEvents({
+        config: context.config,
+        tokenExtractor: context.tokenExtractor,
+        request: chatRequest,
+        model,
+      })) {
+        if (event.type === 'error') {
+          throw new OpenAIHttpError(502, event.message, 'server_error', event.code);
+        }
+        content += event.text;
       }
-      content += event.text;
-    }
 
-    const created = Math.floor(Date.now() / 1000);
-    sendJson(res, 200, {
-      id: `chatcmpl-${created}`,
-      object: 'chat.completion',
-      created,
-      model: chatRequest.model,
-      choices: [
-        {
-          index: 0,
-          message: { role: 'assistant', content },
-          finish_reason: 'stop',
-        },
-      ],
-    }, { ...baseHeaders, ...rateHeaders });
+      const created = Math.floor(Date.now() / 1000);
+      sendJson(res, 200, {
+        id: `chatcmpl-${created}`,
+        object: 'chat.completion',
+        created,
+        model: chatRequest.model,
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content },
+            finish_reason: 'stop',
+          },
+        ],
+      }, { ...baseHeaders, ...rateHeaders });
+    } finally {
+      context.requestGuard.release(token);
+    }
   } catch (error) {
     const extraHeaders = typeof error === 'object' && error !== null && 'headers' in error ? (error.headers as http.OutgoingHttpHeaders) : {};
     sendOpenAIError(res, toServerError(error), { ...baseHeaders, ...extraHeaders });

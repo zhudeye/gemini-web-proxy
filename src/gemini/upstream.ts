@@ -7,6 +7,7 @@ import type { GeminiModelMapping } from '../models/registry.js';
 import type { ChatCompletionRequest } from '../openai/types.js';
 import { buildGeminiEndpointUrl, buildGeminiRequestBody } from '../transform/request-builder.js';
 import { GeminiFrameParser, type GeminiFrameEvent } from '../transform/frame-parser.js';
+import { browserHeaders } from '../security/headers.js';
 
 export interface GeminiGenerateOptions {
   readonly config: AppConfig;
@@ -35,6 +36,12 @@ export async function* generateGeminiEvents(options: GeminiGenerateOptions): Asy
 
   const geminiRequest = buildGeminiRequestBody(options.request, tokens, options.model);
 
+  // Merge browser-like headers to reduce automation detection risk
+  const upstreamHeaders = {
+    ...geminiRequest.headers,
+    ...browserHeaders(),
+  };
+
   let response: Response;
 
   if (options.config.geminiProxy) {
@@ -42,7 +49,7 @@ export async function* generateGeminiEvents(options: GeminiGenerateOptions): Asy
     try {
       response = await undiciFetch(endpointUrl, {
         method: 'POST',
-        headers: geminiRequest.headers,
+        headers: upstreamHeaders,
         body: geminiRequest.body,
         signal: options.signal,
         dispatcher: proxyAgent,
@@ -53,7 +60,7 @@ export async function* generateGeminiEvents(options: GeminiGenerateOptions): Asy
   } else {
     response = await fetch(endpointUrl, {
       method: 'POST',
-      headers: geminiRequest.headers,
+      headers: upstreamHeaders,
       body: geminiRequest.body,
       signal: options.signal,
     });
@@ -66,6 +73,14 @@ export async function* generateGeminiEvents(options: GeminiGenerateOptions): Asy
       const text = await response.text();
       detail = text.length > 200 ? text.slice(0, 200) + '...' : text;
     } catch { /* ignore */ }
+
+    // 429 = rate limited — likely cookie expired or too many requests
+    if (response.status === 429) {
+      process.stderr.write(
+        `[WARN] Gemini upstream returned 429 — cookie may be expiring or rate limited. ` +
+        `Consider rotating __Secure-1PSID cookies.\n`,
+      );
+    }
 
     yield {
       type: 'error',
