@@ -265,6 +265,13 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse, 
       context.requestGuard.release(token);
     }
   } catch (error) {
+    // Headers may already be sent (streaming path writes 200 before generating)
+    if (res.headersSent) {
+      if (!res.writableEnded) {
+        res.end();
+      }
+      return;
+    }
     const extraHeaders = typeof error === 'object' && error !== null && 'headers' in error ? (error.headers as http.OutgoingHttpHeaders) : {};
     sendOpenAIError(res, toServerError(error), { ...baseHeaders, ...extraHeaders });
   }
