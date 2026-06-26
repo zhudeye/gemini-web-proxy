@@ -42,7 +42,7 @@ describe('streaming chat completions route', () => {
         Authorization: 'Bearer test-key',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ model: 'gemini-web', messages: [{ role: 'user', content: 'Stream hello' }], stream: true }),
+      body: JSON.stringify({ model: 'gemini-3.5-flash', messages: [{ role: 'user', content: 'Stream hello' }], stream: true }),
     });
 
     const text = await response.text();

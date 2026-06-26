@@ -40,7 +40,7 @@ async function postChat(baseUrl: string, content: string): Promise<Response> {
       Authorization: 'Bearer test-key',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ model: 'gemini-web', messages: [{ role: 'user', content }] }),
+    body: JSON.stringify({ model: 'gemini-3.5-flash', messages: [{ role: 'user', content }] }),
   });
 }
 
@@ -53,7 +53,7 @@ describe('non-streaming chat completions route', () => {
     expect(response.status).toBe(200);
     expect(body).toMatchObject({
       object: 'chat.completion',
-      model: 'gemini-web',
+      model: 'gemini-3.5-flash',
       choices: [{ index: 0, message: { role: 'assistant', content: 'Mock Gemini response to: Say hello' } }],
     });
   });
@@ -61,6 +61,8 @@ describe('non-streaming chat completions route', () => {
   it('keeps requests stateless', async () => {
     const baseUrl = await startTestServer();
     await postChat(baseUrl, 'First');
+    // Wait for RequestGuard's min delay window (default 1500ms)
+    await new Promise((resolve) => setTimeout(resolve, 1_600));
     const response = await postChat(baseUrl, 'Second');
     const body = await response.json();
     const content = body.choices[0].message.content as string;
