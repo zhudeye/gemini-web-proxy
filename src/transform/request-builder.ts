@@ -88,8 +88,8 @@ export function buildGeminiInnerRequest(request: ChatCompletionRequest, uuid: st
   // [41]: [1]
   req[41] = [1];
 
-  // [45]: temporary chat flag (null/1 for stateless, 0 for persistent)
-  // Leave null to avoid carrying conversation context between requests.
+  // [45]: temporary chat flag (1 = stateless, 0 = persistent)
+  req[45] = 1;
 
   // [53]: 0
   req[53] = 0;
@@ -100,8 +100,8 @@ export function buildGeminiInnerRequest(request: ChatCompletionRequest, uuid: st
   // [61]: []
   req[61] = [];
 
-  // [68]: 1 (always 1; makes server send incremental chunks)
-  req[68] = 1;
+  // [68]: 2 (consolidated response format; 1 = streaming chunks)
+  req[68] = 2;
 
   return req;
 }
