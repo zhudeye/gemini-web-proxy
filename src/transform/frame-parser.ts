@@ -255,7 +255,7 @@ export class GeminiFrameParser {
           const delta = candidateText.startsWith(this.lastText) ? candidateText.slice(this.lastText.length) : candidateText;
           this.lastText = candidateText;
           if (delta.length > 0) {
-            return [{ type: 'delta', text: delta, fullText: candidateText }];
+            return [{ type: 'delta', text: '[G]' + delta, fullText: '[G]' + candidateText }];
           }
           return [];
         }
@@ -284,7 +284,7 @@ export class GeminiFrameParser {
       return [];
     }
 
-    return [{ type: 'delta', text: delta, fullText }];
+    return [{ type: 'delta', text: '[L]' + delta, fullText: '[L]' + fullText }];
   }
 }
 
