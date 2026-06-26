@@ -17,11 +17,17 @@ export interface AppConfig {
   readonly apiKeys: readonly string[];
   readonly allowedOrigins: readonly string[];
   readonly rateLimitPerMinute: number;
+  readonly maxConcurrentRequests: number;
+  readonly minRequestDelayMs: number;
+  readonly dailyQuota: number;
   readonly isProduction: boolean;
 }
 
 const DEFAULT_PORT = 8080;
 const DEFAULT_RATE_LIMIT_PER_MINUTE = 20;
+const DEFAULT_MAX_CONCURRENT = 2;
+const DEFAULT_MIN_DELAY_MS = 1_500;
+const DEFAULT_DAILY_QUOTA = 500;
 const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'] as const;
 
 /**
@@ -160,6 +166,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       'RATE_LIMIT_PER_MINUTE',
       env['RATE_LIMIT_PER_MINUTE'],
       DEFAULT_RATE_LIMIT_PER_MINUTE,
+    ),
+    maxConcurrentRequests: parsePositiveInteger(
+      'MAX_CONCURRENT_REQUESTS',
+      env['MAX_CONCURRENT_REQUESTS'],
+      DEFAULT_MAX_CONCURRENT,
+    ),
+    minRequestDelayMs: parsePositiveInteger(
+      'MIN_REQUEST_DELAY_MS',
+      env['MIN_REQUEST_DELAY_MS'],
+      DEFAULT_MIN_DELAY_MS,
+    ),
+    dailyQuota: parsePositiveInteger(
+      'DAILY_QUOTA',
+      env['DAILY_QUOTA'],
+      DEFAULT_DAILY_QUOTA,
     ),
     isProduction,
   };
