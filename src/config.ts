@@ -13,6 +13,7 @@ export interface AppConfig {
   readonly geminiCookieTs: string;
   readonly geminiCookieCc?: string;
   readonly geminiEndpoint: string;
+  readonly geminiProxy: string;
   readonly apiKeys: readonly string[];
   readonly allowedOrigins: readonly string[];
   readonly rateLimitPerMinute: number;
@@ -135,6 +136,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const geminiEndpointRaw = env['GEMINI_ENDPOINT']?.trim() ?? '';
   const geminiEndpoint = (geminiEndpointRaw.length > 0) ? validateUrl(geminiEndpointRaw) : '';
 
+  // Optional proxy for Gemini upstream (e.g. http://127.0.0.1:7890)
+  const geminiProxyRaw = env['GEMINI_PROXY']?.trim() ?? '';
+  const geminiProxy = (geminiProxyRaw.length > 0) ? validateUrl(geminiProxyRaw) : '';
+
   const apiKeys = parseList('API_KEYS', env['API_KEYS'], isProduction ? [] : ['test-key']);
 
   if (isProduction && apiKeys.length === 0) {
@@ -148,6 +153,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     geminiCookieTs,
     geminiCookieCc,
     geminiEndpoint,
+    geminiProxy,
     apiKeys,
     allowedOrigins: parseList('ALLOWED_ORIGINS', env['ALLOWED_ORIGINS'], DEFAULT_ALLOWED_ORIGINS),
     rateLimitPerMinute: parsePositiveInteger(

@@ -5,5 +5,7 @@ dist/
 !.env.example
 npm-debug.log*
 *.log
+logs/
 .DS_Store
 .sisyphus/evidence/
+dumps/

@@ -127,4 +127,38 @@ describe('GeminiFrameParser', () => {
 
     expect(events).toEqual([{ type: 'error', code: '1037', message: 'Gemini Web quota or upstream error' }]);
   });
+
+  it('skips metadata array frames that leak encrypted context data', () => {
+    // Real frames like [null, ["c_..."], {...}, null] (length 4) carry metadata
+    // but no candidate text. Without the length<5 guard they fall into
+    // findLongestString and emit garbled context data.
+    const payload4 = JSON.stringify([null, ['c_5d7e6da7217923ea', 'r_88798db14c2d9b3d'], { key: 'val' }, null]);
+    const payload5_no_candidates = JSON.stringify([null, ['c_id', 'r_id'], null, null, null]);
+    const payload5_empty_candidates = JSON.stringify([null, ['c_id', 'r_id'], null, null, []]);
+    const frames = [
+      ")]}'",
+      '42',
+      JSON.stringify(['wrb.fr', null, payload4]),
+      JSON.stringify(['wrb.fr', null, payload5_no_candidates]),
+      JSON.stringify(['wrb.fr', null, payload5_empty_candidates]),
+      '',
+    ].join('\n');
+
+    const events = parseGeminiFrameStream(frames);
+    expect(events).toEqual([]);
+  });
+
+  it('skips non-array object metadata frames', () => {
+    // Object inner payload (non-array) should be skipped entirely
+    const payload = JSON.stringify({ some: 'metadata', response: 'data' });
+    const frames = [
+      ")]}'",
+      '42',
+      JSON.stringify(['wrb.fr', null, payload]),
+      '',
+    ].join('\n');
+
+    const events = parseGeminiFrameStream(frames);
+    expect(events).toEqual([]);
+  });
 });

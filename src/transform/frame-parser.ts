@@ -255,7 +255,7 @@ export class GeminiFrameParser {
           const delta = candidateText.startsWith(this.lastText) ? candidateText.slice(this.lastText.length) : candidateText;
           this.lastText = candidateText;
           if (delta.length > 0) {
-            return [{ type: 'delta', text: '[G]' + delta, fullText: '[G]' + candidateText }];
+            return [{ type: 'delta', text: delta, fullText: candidateText }];
           }
           return [];
         }
@@ -265,9 +265,12 @@ export class GeminiFrameParser {
       return [];
     }
 
-    // Metadata frames (inner is an object, not array) — skip entirely
+    // Metadata frames: skip anything that isn't a StreamGenerate-style array
     // to prevent findLongestString from emitting garbled context data.
-    if (!Array.isArray(inner)) {
+    // StreamGenerate has inner.length >= 5 with candidates in inner[4].
+    // Metadata frames are either non-arrays (objects) or short arrays
+    // (e.g. [null, ["c_..."], {...}, null] length 4) with no candidate text.
+    if (!Array.isArray(inner) || inner.length < 5) {
       return [];
     }
 
@@ -284,7 +287,7 @@ export class GeminiFrameParser {
       return [];
     }
 
-    return [{ type: 'delta', text: '[L]' + delta, fullText: '[L]' + fullText }];
+    return [{ type: 'delta', text: delta, fullText }];
   }
 }
 

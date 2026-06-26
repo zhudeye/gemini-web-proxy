@@ -1,3 +1,6 @@
+import { appendFileSync, mkdirSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { ProxyAgent, fetch as undiciFetch } from 'undici';
 import type { AppConfig } from '../config.js';
 import type { GeminiTokenExtractor } from '../auth/token-extractor.js';
 import type { GeminiModelMapping } from '../models/registry.js';
@@ -31,12 +34,30 @@ export async function* generateGeminiEvents(options: GeminiGenerateOptions): Asy
   const endpointUrl = options.config.geminiEndpoint || buildGeminiEndpointUrl(tokens);
 
   const geminiRequest = buildGeminiRequestBody(options.request, tokens, options.model);
-  const response = await fetch(endpointUrl, {
-    method: 'POST',
-    headers: geminiRequest.headers,
-    body: geminiRequest.body,
-    signal: options.signal,
-  });
+
+  let response: Response;
+
+  if (options.config.geminiProxy) {
+    const proxyAgent = new ProxyAgent(options.config.geminiProxy);
+    try {
+      response = await undiciFetch(endpointUrl, {
+        method: 'POST',
+        headers: geminiRequest.headers,
+        body: geminiRequest.body,
+        signal: options.signal,
+        dispatcher: proxyAgent,
+      } as any);
+    } finally {
+      proxyAgent.close();
+    }
+  } else {
+    response = await fetch(endpointUrl, {
+      method: 'POST',
+      headers: geminiRequest.headers,
+      body: geminiRequest.body,
+      signal: options.signal,
+    });
+  }
 
   if (!response.ok) {
     // Try to read error body for diagnostics
@@ -78,6 +99,22 @@ export async function* generateGeminiEvents(options: GeminiGenerateOptions): Asy
   for (const event of parser.flush()) {
     yieldedCount++;
     yield event;
+  }
+
+  // If GEMINI_DUMP is set, write raw response to disk for debugging
+  const dumpDir = process.env['GEMINI_DUMP'];
+  if (dumpDir && rawText.length > 0) {
+    const ts = Date.now();
+    const dumpPath = join(dumpDir, `gemini-raw-${ts}.txt`);
+    try {
+      if (!existsSync(dumpDir)) {
+        mkdirSync(dumpDir, { recursive: true });
+      }
+      appendFileSync(dumpPath, rawText, 'utf-8');
+      process.stderr.write(`[dump] Raw Gemini response written to ${dumpPath}\n`);
+    } catch (err) {
+      process.stderr.write(`[dump] Failed to write raw response: ${err}\n`);
+    }
   }
 
   // If parser produced no events, emit a diagnostic error

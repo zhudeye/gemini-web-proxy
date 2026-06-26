@@ -1,8 +1,9 @@
 import http, { type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
+import { ProxyAgent, fetch as undiciFetch } from 'undici';
 import { CONFIG, type AppConfig } from './config.js';
-import { GeminiTokenExtractor } from './auth/token-extractor.js';
+import { GeminiTokenExtractor, type FetchLike } from './auth/token-extractor.js';
 import { generateGeminiEvents } from './gemini/upstream.js';
 import { readJsonBody } from './http/json-body.js';
 import { createFallbackModelRegistry, type ModelRegistry } from './models/registry.js';
@@ -22,7 +23,16 @@ export interface AppContext {
   readonly rateLimiter: SlidingWindowRateLimiter;
 }
 
+function createProxyAwareFetch(proxyUrl: string): FetchLike {
+  const agent = new ProxyAgent(proxyUrl);
+  return (input, init) => undiciFetch(input, { ...init, dispatcher: agent });
+}
+
 function createDefaultContext(config: AppConfig = CONFIG): AppContext {
+  const fetchImpl: FetchLike = config.geminiProxy
+    ? createProxyAwareFetch(config.geminiProxy)
+    : fetch;
+
   return {
     config,
     modelRegistry: createFallbackModelRegistry(),
@@ -30,7 +40,7 @@ function createDefaultContext(config: AppConfig = CONFIG): AppContext {
       geminiCookie: config.geminiCookie,
       geminiCookieTs: config.geminiCookieTs,
       geminiCookieCc: config.geminiCookieCc,
-    }),
+    }, fetchImpl),
     rateLimiter: new SlidingWindowRateLimiter(config.rateLimitPerMinute),
   };
 }
