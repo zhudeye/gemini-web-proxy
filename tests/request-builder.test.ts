@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { GeminiWebTokens } from '../src/auth/token-extractor.js';
 import type { GeminiModelMapping } from '../src/models/registry.js';
+import { buildModelHeaders } from '../src/models/registry.js';
 import { parseChatCompletionRequest } from '../src/openai/types.js';
-import { buildGeminiEndpointUrl, buildGeminiFReq, buildGeminiRequestBody } from '../src/transform/request-builder.js';
+import { buildGeminiEndpointUrl, buildGeminiInnerRequest, buildGeminiRequestBody } from '../src/transform/request-builder.js';
 
 const tokens: GeminiWebTokens = {
   snlM0e: 'token-snlm0e-value',
@@ -12,7 +13,8 @@ const tokens: GeminiWebTokens = {
 
 const model: GeminiModelMapping = {
   id: 'gemini-web',
-  upstreamModelId: 'upstream-model-id',
+  upstreamModelId: 'gemini-2.0-flash-exp',
+  modelHeaders: buildModelHeaders('fbb127bbb056c959', 1),
   ownedBy: 'google',
   discovered: false,
 };
@@ -34,12 +36,43 @@ describe('Gemini Web request builder', () => {
     const params = new URLSearchParams(result.body);
 
     expect(params.get('at')).toBe('token-snlm0e-value');
-    expect(params.get('f.req')).toContain('Hello');
-    expect(result.fReq[1]).toBe('upstream-model-id');
-    expect(result.fReq[7]).toBe(1);
-    expect(result.fReq[8]).toBe(0.7);
-    expect(result.fReq[45]).toBe(1);
+
+    // f.req should be [null,"<json_encoded_inner_array>"]
+    const fReqRaw = params.get('f.req');
+    expect(fReqRaw).toContain('Continue');
+
+    // Parse the outer structure: [null, innerJsonString]
+    const outerParsed = JSON.parse(fReqRaw!);
+    expect(outerParsed).toHaveLength(2);
+    expect(outerParsed[0]).toBeNull();
+    expect(typeof outerParsed[1]).toBe('string');
+
+    // Parse the inner JSON array
+    const innerParsed = JSON.parse(outerParsed[1]);
+    expect(Array.isArray(innerParsed)).toBe(true);
+    expect(innerParsed).toHaveLength(69);
+
+    // [0] should contain the message text
+    expect(innerParsed[0][0]).toBe('Continue');
+
+    // [7] should be 1 (streaming)
+    expect(innerParsed[7]).toBe(1);
+
+    // [59] should be a UUID
+    expect(innerParsed[59]).toMatch(/^[0-9A-F-]{36}$/);
+
     expect(result.headers['Content-Type']).toBe('application/x-www-form-urlencoded;charset=UTF-8');
+    expect(result.headers['Origin']).toBe('https://gemini.google.com');
+    expect(result.headers['Referer']).toBe('https://gemini.google.com/');
+    expect(result.headers['X-Same-Domain']).toBe('1');
+    expect(result.headers['x-goog-ext-525001261-jspb']).toBeDefined();
+    expect(result.headers['x-goog-ext-73010989-jspb']).toBe('[0]');
+    expect(result.headers['x-goog-ext-525005358-jspb']).toBeDefined();
+
+    // Verify UUID matches between header and internal array
+    const uuidHeader = JSON.parse(result.headers['x-goog-ext-525005358-jspb']);
+    expect(uuidHeader[0]).toBe(innerParsed[59]);
+    expect(uuidHeader[1]).toBe(1);
   });
 
   it('prepends system messages to the first user message', () => {
@@ -51,8 +84,8 @@ describe('Gemini Web request builder', () => {
       ],
     });
 
-    const fReq = buildGeminiFReq(request, model);
-    const encoded = JSON.stringify(fReq);
+    const innerRequest = buildGeminiInnerRequest(request, 'TEST-UUID-0000-0000-000000000000');
+    const encoded = JSON.stringify(innerRequest);
 
     expect(encoded).toContain('System instructions');
     expect(encoded).toContain('Be concise.');
@@ -71,11 +104,10 @@ describe('Gemini Web request builder', () => {
 });
 
 describe('buildGeminiEndpointUrl', () => {
-  it('builds a valid batchexecute URL with tokens and rpcids', () => {
+  it('builds a valid StreamGenerate URL with tokens', () => {
     const url = buildGeminiEndpointUrl(tokens, 'en');
 
-    expect(url).toContain('https://gemini.google.com/_/BardChatUi/data/batchexecute');
-    expect(url).toContain('rpcids=aPya6c');
+    expect(url).toContain('https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate');
     expect(url).toContain('bl=token-cfb2h-value');
     expect(url).toContain('f.sid=token-fdrfje-value');
     expect(url).toContain('hl=en');

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { OpenAIHttpError } from '../src/openai/errors.js';
-import { ModelRegistry } from '../src/models/registry.js';
+import { ModelRegistry, buildModelHeaders } from '../src/models/registry.js';
 
 describe('ModelRegistry', () => {
   it('returns fallback OpenAI-compatible model list when discovery is unavailable', async () => {
@@ -17,13 +17,13 @@ describe('ModelRegistry', () => {
 
   it('uses discovered models when discovery succeeds', async () => {
     const registry = new ModelRegistry(async () => [
-      { id: 'gemini-2.5-pro', upstreamModelId: '9d8ca3786ebdfbea', ownedBy: 'google', discovered: true },
+      { id: 'gemini-2.5-pro', upstreamModelId: 'gemini-2.5-pro', modelHeaders: buildModelHeaders('9d8ca3786ebdfbea', 1), ownedBy: 'google', discovered: true },
     ]);
 
     const state = await registry.refresh();
 
     expect(state.degraded).toBe(false);
-    expect(registry.resolveModel('gemini-2.5-pro').upstreamModelId).toBe('9d8ca3786ebdfbea');
+    expect(registry.resolveModel('gemini-2.5-pro').upstreamModelId).toBe('gemini-2.5-pro');
   });
 
   it('falls back and marks degraded when discovery fails', async () => {
