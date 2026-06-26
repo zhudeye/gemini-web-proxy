@@ -3,21 +3,30 @@
 ## 1. Architecture Overview
 
 ```
-Client (OpenAI SDK/curl)
+Client (OpenAI SDK/curl / Cherry Studio)
   │  POST /v1/chat/completions
   │  GET /v1/models
   ▼
-Express Server (src/server.ts)
-  │  authenticate → rate-limit → parse request
-  │  read cookie from GEMINI_COOKIE env
+HTTP Server (src/server.ts) — plain node:http
+  │  authenticate → rate-limit → guard (concurrency/delay/quota)
+  │  modelRegistry.refresh() — returns BUILTIN_MODELS (4 hardcoded models)
+  ▼
+ModelRegistry (src/models/registry.ts)
+  │  4 built-in models with hardcoded hex IDs:
+  │    gemini-3.5-flash     56fdd199312815e2  (flash,  standard)
+  │    gemini-3.5-thinking  56fdd199312815e2  (flash,  extended thinking)
+  │    gemini-3.1-pro       e6fa609c3fa255c0  (pro,    standard)
+  │    gemini-3.1-flash-lite 8c46e95b1a07cecc (flash-lite, standard)
+  │  No homepage scraping — hex IDs are compiled in.
   ▼
 GeminiTokenExtractor (src/auth/token-extractor.ts)
   │  fetches gemini.google.com/app HTML
-  │  extracts SNlM0e, cfb2h, FdrFJe tokens
+  │  extracts SNlM0e, cfb2h, FdrFJe tokens (for auth, NOT for model discovery)
   ▼
 request-builder (src/transform/request-builder.ts)
   │  builds StreamGenerate URL + POST body
   │  maps OpenAI messages → Gemini sparse-array format
+  │  attaches model-specific headers from ModelRegistry
   ▼
 upstream.ts (src/gemini/upstream.ts)
   │  HTTP POST to gemini.google.com StreamGenerate endpoint
@@ -50,7 +59,7 @@ All `/v1/*` routes require `Authorization: Bearer <key>` where the key is in the
 | `src/transform/request-builder.ts` | Converts OpenAI `ChatCompletionRequest` into Gemini's StreamGenerate POST body. Builds the sparse 69-element inner request array, the `f.req` URL-encoded body, and model-specific headers. |
 | `src/config.ts` | Reads and validates all environment variables (`GEMINI_COOKIE`, `GEMINI_PROXY`, `API_KEYS`, `PORT`, etc.). Provides a typed `AppConfig` interface and a `loadConfig()` factory. |
 | `src/http/json-body.ts` | Utility to read and parse `req` body as JSON with size limits. |
-| `src/models/registry.ts` | Model registry: resolves model names to Gemini model mappings (headers + endpoint config). |
+| `src/models/registry.ts` | Model registry with 4 built-in models (`gemini-3.5-flash`, `gemini-3.5-thinking`, `gemini-3.1-pro`, `gemini-3.1-flash-lite`). Each model has a hardcoded hex ID, capacity tier, and thinking level. `ModelRegistry.refresh()` returns built-in models immediately without scraping the Gemini homepage. `resolveModel()` maps OpenAI model names to `GeminiModelMapping` (containing `modelHeaders` for the StreamGenerate endpoint). |
 | `src/openai/types.ts` | OpenAI-compatible TypeScript types (`ChatCompletionRequest`, `ChatMessage`, etc.) and a parser/validator (`parseChatCompletionRequest`). |
 | `src/openai/errors.ts` | OpenAI-formatted error body builders. |
 | `src/security/auth.ts` | Bearer token extraction and validation against configured `API_KEYS`. |
@@ -252,14 +261,17 @@ In non-production mode (`NODE_ENV !== 'production'`) with no `GEMINI_ENDPOINT` s
 | Variable | Required in production | Default | Description |
 |---|---|---|---|
 | `NODE_ENV` | yes | `development` | `production` enables strict validation and disables mock mode |
-| `PORT` | no | `8080` | HTTP listen port |
-| `GEMINI_COOKIE` | yes | mock value (dev) | Combined cookie string: `__Secure-1PSID=x; __Secure-1PSIDTS=y; __Secure-1PSIDCC=z` |
+| `PORT` | no | `8080` | HTTP listen port. Render injects this automatically. |
+| `GEMINI_COOKIE` | yes | mock value (dev) | Combined cookie string: `__Secure-1PSID=x; __Secure-1PSIDTS=y; __Secure-1PSIDCC=z`. Paste the full cookie string from DevTools — extra cookies are ignored. |
 | `API_KEYS` | yes | `test-key` (dev) | Comma-separated Bearer API keys |
 | `ALLOWED_ORIGINS` | no | `http://localhost:3000, http://127.0.0.1:3000` | CORS allowlist |
 | `RATE_LIMIT_PER_MINUTE` | no | `20` | Max requests per API key per minute |
+| `MAX_CONCURRENT_REQUESTS` | no | `2` | Max concurrent requests per API key |
+| `MIN_REQUEST_DELAY_MS` | no | `1500` | Minimum interval (ms) between requests per key |
+| `DAILY_QUOTA` | no | `500` | Max requests per API key per day |
 | `GEMINI_ENDPOINT` | no | auto-discovered | Override the StreamGenerate endpoint URL |
-| `GEMINI_PROXY` | no | none | HTTP proxy URL for upstream Gemini requests |
-| `GEMINI_DUMP` | no | none | Directory path for raw response dumps |
+| `GEMINI_PROXY` | no | none | HTTP proxy URL for upstream Gemini requests. Do **not** set in production (Render). |
+| `GEMINI_DUMP` | no | none | Directory path for raw response dumps. Dev-only. |
 
 ## 6. Testing
 
@@ -289,6 +301,10 @@ function wrbFrame(fullText: string): string {
 - **Encrypted suffix stripping** — verifies `Helloc_a9ae8c61a13c9db3...` strips to `Hello`
 - **Error sequence detection** — verifies `[5,2,0,1,0]` maps to an error event
 - **Malformed JSON** — verifies `FrameParseError` is thrown
+
+**Key test file: `tests/model-registry.test.ts`**
+
+Tests the 4 built-in models, model resolution, `createModelMapping` helper, and `toOpenAIResponse` serialization. No homepage fetch required — models are hardcoded.
 
 **Running specific tests:**
 ```
@@ -320,6 +336,19 @@ npx vitest --watch   # watch mode
 5. **ProxyAgent not closing** — Each request creates a new `ProxyAgent` instance. If you see socket exhaustion, verify that the `finally` block in `upstream.ts` line 50-52 is calling `proxyAgent.close()`. For high-throughput deployments, consider hoisting the agent to a singleton.
 
 6. **`text/event-stream` buffering by reverse proxies** — Nginx, Cloudflare, and Render's proxy may buffer SSE output. The `X-Accel-Buffering: no` header helps with nginx. If streaming appears to hang, check whether intermediate proxies are buffering the response.
+
+7. **`ERR_HTTP_HEADERS_SENT` crash** — The streaming path writes HTTP 200 headers immediately, then generates Gemini events. If token extraction or the upstream request fails after headers are sent, the catch block in `handleChatCompletions` must check `res.headersSent` before calling `sendOpenAIError()`. Without this guard, Node.js throws `ERR_HTTP_HEADERS_SENT` and the process exits. Fixed in `src/server.ts`:
+   ```typescript
+   } catch (error) {
+     if (res.headersSent) {
+       if (!res.writableEnded) res.end();
+       return;
+     }
+     sendOpenAIError(res, toServerError(error), { ... });
+   }
+   ```
+
+8. **`stop.cmd` not working on Windows** — The original script used `tokens=1` on `netstat -ano` output, which captured the protocol name (`TCP`) instead of the PID (5th column). Fixed by using `tokens=5` and removing the redundant outer `tasklist` loop.
 
 ## 8. Build & Run Commands
 
@@ -360,4 +389,91 @@ npm run dev
 npm ci && npm run build && npm start
 ```
 
+**Windows quick scripts:**
+
+```batch
+start.cmd    :: Reads .env, starts node dist/server.js in background
+stop.cmd     :: Finds and kills the process on port 8080
+```
+
 The build output goes to `dist/server.js`. The entry module detects whether it is the main module (`import.meta.url === entrypoint`) and calls `startServer()` automatically.
+
+## 9. Deploying to Render
+
+### Prerequisites
+
+- Push the repository to GitHub (`.env` is gitignored — safe)
+- Render account connected to the GitHub repo
+
+### Via Blueprint (render.yaml)
+
+The included `render.yaml` defines:
+
+```yaml
+services:
+  - type: web
+    name: gemini-web-proxy
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "20"
+      - key: GEMINI_COOKIE          # sync: false → set in Dashboard
+        sync: false
+      - key: API_KEYS               # sync: false → set in Dashboard
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+```
+
+In Render Dashboard: **New Blueprint** → select repo → `render.yaml` is auto-detected.
+
+### Manual Web Service Creation
+
+| Setting | Value |
+|---|---|
+| Build Command | `npm ci && npm run build` |
+| Start Command | `npm start` |
+| Health Check Path | `/health` |
+
+### Required Environment Variables (set in Dashboard)
+
+| Variable | Value | Notes |
+|---|---|---|
+| `NODE_ENV` | `production` | Pre-set in render.yaml |
+| `GEMINI_COOKIE` | Full cookie string from DevTools | Paste everything — parser auto-extracts `__Secure-1PSID`, `__Secure-1PSIDTS`, `__Secure-1PSIDCC` |
+| `API_KEYS` | `key1,key2` | Comma-separated Bearer tokens |
+
+### Do NOT Set in Production
+
+- `GEMINI_PROXY` — local proxy only (Clash etc.)
+- `GEMINI_DUMP` — dev debugging only
+- `PORT` — Render injects this automatically
+
+### Keeping Render Awake
+
+Render Free Web Services spin down after ~15 minutes of inactivity. Cold start takes ~30–60 seconds. To reduce sleep:
+
+- **UptimeRobot** — free HTTP monitor pinging `/health` every 10 minutes
+- Render's **Starter** plan ($7/mo) — no spin-down
+
+### Re-deploying After Changes
+
+1. Push to GitHub (`git push origin main`)
+2. Render Dashboard → Manual Deploy → **Deploy with latest build**
+
+Or enable **Auto-Deploy** in Render Dashboard → Settings → Deploy hooks.
+
+### Troubleshooting Render Deployment
+
+| Symptom | Likely cause |
+|---|---|
+| Health check passes, `/v1/models` returns 401 with valid key | Cold start — wait 30s and retry |
+| `/v1/chat/completions` returns `502` with Gemini upstream error | Cookie expired — re-extract from DevTools and update `GEMINI_COOKIE` |
+| `ERR_HTTP_HEADERS_SENT` in logs | Old build without the fix (`3854d1b`). Re-deploy with latest commit. |
+| Server crashes on startup | Missing `GEMINI_COOKIE` or `API_KEYS` — check Dashboard env vars |
