@@ -80,7 +80,8 @@ export function buildGeminiRequestBody(
 }
 
 /**
- * Build the Gemini Web StreamGenerate endpoint URL from extracted tokens.
+ * Build the Gemini Web batchexecute endpoint URL from extracted tokens.
+ * Uses the `aPya6c` RPC for conversation generation.
  * The `_reqid` param auto-increments per request to satisfy Google's batching protocol.
  */
 let nextReqId = Math.floor(Math.random() * 100000) + 100000;
@@ -89,7 +90,9 @@ export function buildGeminiEndpointUrl(tokens: GeminiWebTokens, lang = 'en'): st
   const reqId = nextReqId;
   nextReqId += 100000;
 
-  const url = new URL('https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate');
+  const url = new URL('https://gemini.google.com/_/BardChatUi/data/batchexecute');
+  url.searchParams.set('rpcids', 'aPya6c');
+  url.searchParams.set('source-path', '/app');
   url.searchParams.set('bl', tokens.cfb2h);
   url.searchParams.set('f.sid', tokens.fdrFJe);
   url.searchParams.set('hl', lang);

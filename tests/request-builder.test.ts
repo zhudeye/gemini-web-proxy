@@ -71,10 +71,11 @@ describe('Gemini Web request builder', () => {
 });
 
 describe('buildGeminiEndpointUrl', () => {
-  it('builds a valid StreamGenerate URL with tokens', () => {
+  it('builds a valid batchexecute URL with tokens and rpcids', () => {
     const url = buildGeminiEndpointUrl(tokens, 'en');
 
-    expect(url).toContain('https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate');
+    expect(url).toContain('https://gemini.google.com/_/BardChatUi/data/batchexecute');
+    expect(url).toContain('rpcids=aPya6c');
     expect(url).toContain('bl=token-cfb2h-value');
     expect(url).toContain('f.sid=token-fdrfje-value');
     expect(url).toContain('hl=en');
