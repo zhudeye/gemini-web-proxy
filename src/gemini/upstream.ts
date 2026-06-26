@@ -39,7 +39,20 @@ export async function* generateGeminiEvents(options: GeminiGenerateOptions): Asy
   });
 
   if (!response.ok) {
-    yield { type: 'error', code: String(response.status), message: `Gemini upstream failed with HTTP ${response.status}` };
+    // Try to read error body for diagnostics
+    let detail = '';
+    try {
+      const text = await response.text();
+      detail = text.length > 200 ? text.slice(0, 200) + '...' : text;
+    } catch { /* ignore */ }
+
+    yield {
+      type: 'error',
+      code: String(response.status),
+      message: detail
+        ? `Gemini upstream failed with HTTP ${response.status}: ${detail}`
+        : `Gemini upstream failed with HTTP ${response.status}`,
+    };
     return;
   }
 
@@ -50,15 +63,30 @@ export async function* generateGeminiEvents(options: GeminiGenerateOptions): Asy
 
   const parser = new GeminiFrameParser();
   const decoder = new TextDecoder();
+  let rawText = '';
+  let yieldedCount = 0;
 
   for await (const chunk of response.body) {
     const text = decoder.decode(chunk, { stream: true });
+    rawText += text;
     for (const event of parser.push(text)) {
+      yieldedCount++;
       yield event;
     }
   }
 
   for (const event of parser.flush()) {
+    yieldedCount++;
     yield event;
+  }
+
+  // If parser produced no events, emit a diagnostic error
+  if (yieldedCount === 0 && rawText.length > 0) {
+    const preview = rawText.length > 500 ? rawText.slice(0, 500) + '...' : rawText;
+    yield {
+      type: 'error',
+      code: 'empty_response',
+      message: `Gemini returned no parseable events. Raw response preview: ${preview}`,
+    };
   }
 }
