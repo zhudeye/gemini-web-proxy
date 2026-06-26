@@ -108,6 +108,48 @@ export class GeminiFrameParser {
     return events;
   }
 
+  /**
+   * Extract response text from StreamGenerate response format.
+   *
+   * StreamGenerate payload structure (after parsing inner JSON):
+   *   [null, ["c_id","r_id"], null, null, [[candidate_id, [text_parts], ...]], ...]
+   *                                                 ^^^^^^^^^^^^^^^^
+   * Text is at: parsedPayload[4][n][1] where [1] is an array of text strings.
+   *
+   * Returns null if the payload doesn't match this format.
+   */
+  private extractStreamGenerateText(parsedPayload: unknown): string | null {
+    if (!Array.isArray(parsedPayload) || parsedPayload.length < 5) {
+      return null;
+    }
+
+    const candidates = parsedPayload[4];
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+      return null;
+    }
+
+    let fullText = '';
+
+    for (const candidate of candidates) {
+      if (!Array.isArray(candidate) || candidate.length < 2) {
+        continue;
+      }
+
+      const textParts = candidate[1];
+      if (!Array.isArray(textParts)) {
+        continue;
+      }
+
+      for (const part of textParts) {
+        if (typeof part === 'string') {
+          fullText += part;
+        }
+      }
+    }
+
+    return fullText.length > 0 ? fullText : null;
+  }
+
   flush(): readonly GeminiFrameEvent[] {
     if (this.buffer.trim().length === 0) {
       this.buffer = '';
@@ -160,6 +202,18 @@ export class GeminiFrameParser {
       return [{ type: 'error', code: '1037', message: 'Gemini Web quota or upstream error' }];
     }
 
+    // Try StreamGenerate response format: payload[4] = [[candidate_id, [text_parts], ...]]
+    const candidateText = this.extractStreamGenerateText(inner);
+    if (candidateText !== null) {
+      const delta = candidateText.startsWith(this.lastText) ? candidateText.slice(this.lastText.length) : candidateText;
+      this.lastText = candidateText;
+      if (delta.length > 0) {
+        return [{ type: 'delta', text: delta, fullText: candidateText }];
+      }
+      return [];
+    }
+
+    // Fall back to longest string heuristic (batchexecute format)
     const fullText = findLongestString(inner);
     if (fullText === null || fullText.length === 0) {
       return [];
