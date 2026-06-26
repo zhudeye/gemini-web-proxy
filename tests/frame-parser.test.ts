@@ -100,6 +100,28 @@ describe('GeminiFrameParser', () => {
     expect(deltas[0].text).toBe('nested batch');
   });
 
+  it('strips encrypted context appended by Gemini using conversation ID', () => {
+    // Gemini appends c_<conv_hex><base64>c_<conv_hex> to response text.
+    // convId = "c_a9ae8c61a13c9db3" → convHex = "a9ae8c61a13c9db3" → strips "c_a9ae8c61a13c9db3..." suffix
+    const payload = JSON.stringify([
+      null, ['c_a9ae8c61a13c9db3', 'r_88798db14c2d9b3d'],
+      null, null,
+      [['rc_id', ['Helloc_a9ae8c61a13c9db3AwAAAAAAAAAQwBHO-LzoF6L9DAwh8Bkc_a9ae8c61a13c9db3']]],
+    ]);
+    const frames = [
+      ")]}'",
+      '42',
+      JSON.stringify(['wrb.fr', null, payload]),
+      '',
+    ].join('\n');
+
+    const events = parseGeminiFrameStream(frames);
+    const deltas = events.filter((event) => event.type === 'delta');
+
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0].text).toBe('Hello');
+  });
+
   it('maps known upstream error sequence to error event', () => {
     const events = parseGeminiFrameStream(`${JSON.stringify(['wrb.fr', null, JSON.stringify([[5, 2, 0, 1, 0]])])}\n`);
 

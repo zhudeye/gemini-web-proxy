@@ -116,6 +116,11 @@ export class GeminiFrameParser {
    *                                                 ^^^^^^^^^^^^^^^^
    * Text is at: parsedPayload[4][n][1] where [1] is an array of text strings.
    *
+   * Gemini appends encrypted context data to the response text as:
+   *   <text>c_<conv_hex><base64>c_<conv_hex>
+   * The conversation ID is at parsedPayload[1][0] (e.g., "c_08027...").
+   * We strip this suffix using the conversation ID.
+   *
    * Returns null if the payload doesn't match this format.
    */
   private extractStreamGenerateText(parsedPayload: unknown): string | null {
@@ -126,6 +131,15 @@ export class GeminiFrameParser {
     const candidates = parsedPayload[4];
     if (!Array.isArray(candidates) || candidates.length === 0) {
       return null;
+    }
+
+    // Extract conversation ID from payload[1][0] (e.g., "c_08027...")
+    let convHex: string | null = null;
+    if (Array.isArray(parsedPayload[1]) && parsedPayload[1].length > 0) {
+      const cId = parsedPayload[1][0];
+      if (typeof cId === 'string' && cId.startsWith('c_')) {
+        convHex = cId.slice(2); // remove "c_" prefix
+      }
     }
 
     // For each candidate, the actual response text is at candidate[1][0] (first text part).
@@ -142,9 +156,16 @@ export class GeminiFrameParser {
         continue;
       }
 
-      // Only use the first text part — the rest are non-text metadata/context blobs
+      // Only use the first text part — subsequent ones are context blobs
       if (typeof textParts[0] === 'string') {
-        fullText += textParts[0];
+        let text = textParts[0];
+
+        // Strip encrypted context suffix: c_<conv_hex><base64>c_<conv_hex>
+        if (convHex !== null) {
+          text = text.replace(new RegExp('c_' + convHex.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '.*$', ''), '');
+        }
+
+        fullText += text;
       }
     }
 
@@ -238,6 +259,12 @@ export class GeminiFrameParser {
       }
 
       // payload[4] is a non-array (e.g. metadata object) — skip frame
+      return [];
+    }
+
+    // Metadata frames (inner is an object, not array) — skip entirely
+    // to prevent findLongestString from emitting garbled context data.
+    if (!Array.isArray(inner)) {
       return [];
     }
 

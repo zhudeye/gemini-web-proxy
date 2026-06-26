@@ -100,8 +100,8 @@ export function buildGeminiInnerRequest(request: ChatCompletionRequest, uuid: st
   // [61]: []
   req[61] = [];
 
-  // [68]: 2
-  req[68] = 2;
+  // [68]: 1 (always 1; makes server send incremental chunks)
+  req[68] = 1;
 
   return req;
 }
