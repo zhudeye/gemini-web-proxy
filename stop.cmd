@@ -3,9 +3,8 @@ REM Stop the gemini-web proxy server
 REM Usage: stop.cmd
 
 echo Stopping gemini-web proxy...
-for /f "tokens=2" %%a in ('tasklist /fi "imagename eq node.exe" /fo list ^| findstr "PID:"') do (
-    for /f "tokens=1" %%b in ('netstat -ano ^| findstr ":8080 " ^| findstr "LISTENING"') do (
-        taskkill /F /PID %%b 2>nul
-    )
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8080 " ^| findstr "LISTENING"') do (
+    echo Killing PID %%a on port 8080...
+    taskkill /F /PID %%a 2>nul
 )
 echo Done.
